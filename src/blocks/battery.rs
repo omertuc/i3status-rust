@@ -373,7 +373,7 @@ pub struct Battery {
     output: TextWidget,
     id: String,
     update_interval: Duration,
-    device: Box<dyn BatteryDevice>,
+    device: Option<Box<dyn BatteryDevice>>,
     format: FormatTemplate,
     driver: BatteryDriver,
 }
@@ -471,13 +471,18 @@ impl ConfigBlock for Battery {
         };
 
         let id = Uuid::new_v4().simple().to_string();
-        let device: Box<dyn BatteryDevice> = match driver {
+        let device: Option<Box<dyn BatteryDevice>> = match driver {
             BatteryDriver::Upower => {
                 let out = UpowerDevice::from_device(&block_config.device)?;
                 out.monitor(id.clone(), update_request);
-                Box::new(out)
+                Some(Box::new(out))
             }
-            BatteryDriver::Sysfs => Box::new(PowerSupplyDevice::from_device(&block_config.device)?),
+            BatteryDriver::Sysfs => {
+                match PowerSupplyDevice::from_device(&block_config.device) {
+                    Err(_e) => None,
+                    Ok(v) => Some(Box::new(v))
+                }                
+            }
         };
 
         Ok(Battery {
@@ -495,23 +500,28 @@ impl Block for Battery {
     fn update(&mut self) -> Result<Option<Duration>> {
         // TODO: Maybe use dbus to immediately signal when the battery state changes.
 
-        let status = self.device.status()?;
+        let status = match &self.device {
+            Some(v) => v.status()?,
+            None    => "Full".to_string()
+        };
 
         if status == "Full" || status == "Not charging" {
             self.output.set_icon("bat_full");
             self.output.set_text("".to_string());
             self.output.set_state(State::Good);
         } else {
-            let capacity = self.device.capacity();
+            let device = self.device.as_ref().unwrap();
+
+            let capacity = device.capacity();
             let percentage = match capacity {
                 Ok(capacity) => format!("{}", capacity),
                 Err(_) => "×".into(),
             };
-            let time = match self.device.time_remaining() {
+            let time = match device.time_remaining() {
                 Ok(time) => format!("{}:{:02}", time / 60, time % 60),
                 Err(_) => "×".into(),
             };
-            let power = match self.device.power_consumption() {
+            let power = match device.power_consumption() {
                 Ok(power) => format!("{:.2}", power as f64 / 1000.0 / 1000.0),
                 Err(_) => "×".into(),
             };
