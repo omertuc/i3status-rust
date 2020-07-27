@@ -771,6 +771,7 @@ Creates a block which displays network connection information from NetworkManage
 [[block]]
 block = "networkmanager"
 on_click = "alacritty -e nmtui"
+interface_name_filters = ["br\\-[0-9a-f]{12}", "docker\\d+"]
 ```
 
 ### Options
@@ -783,6 +784,7 @@ Key | Values | Required | Default
 `device_format` | Device string formatter. See below for available placeholders. | No | `"{icon}{ap} {ips}"`
 `connection_format` | Connection string formatter. See below for available placeholders. | No | `"{devices}"`
 `on_click` | On-click handler | No | `""`
+`interface_name_filters` | A list of regex patterns for device interface names to ignore | No | ""
 
 ### AP format string
 
@@ -798,6 +800,7 @@ Placeholder | Description
 ------------|-------------
 `{icon}` | The icon matching the device type.
 `{typename}` | The name of the device type.
+`{name}` | The name of the device interface.
 `{ap}` | The connected AP if available, formatted with the AP format string.
 `{ips}` | The list of IPs for this device.
 
