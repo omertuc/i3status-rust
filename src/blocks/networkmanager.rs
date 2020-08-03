@@ -2,6 +2,7 @@ use std::ffi::OsStr;
 use std::fmt;
 use std::net::Ipv4Addr;
 use std::process::Command;
+use std::result;
 use std::thread;
 use std::time::Instant;
 
@@ -457,7 +458,8 @@ pub struct NetworkManager {
     ap_format: FormatTemplate,
     device_format: FormatTemplate,
     connection_format: FormatTemplate,
-    interface_name_filters: Vec<String>,
+    interface_name_exclude_regexps: Vec<Regex>,
+    interface_name_include_regexps: Vec<Regex>,
 }
 
 #[derive(Deserialize, Debug, Default, Clone)]
@@ -486,9 +488,13 @@ pub struct NetworkManagerConfig {
     #[serde(default = "NetworkManagerConfig::default_connection_format")]
     pub connection_format: String,
 
+    /// Interface name regex patterns to include.
+    #[serde(default = "NetworkManagerConfig::default_interface_name_include_patterns")]
+    pub interface_name_exclude: Vec<String>,
+
     /// Interface name regex patterns to ignore.
-    #[serde(default = "NetworkManagerConfig::default_interface_filters")]
-    pub interface_name_filters: Vec<String>,
+    #[serde(default = "NetworkManagerConfig::default_interface_name_exclude_patterns")]
+    pub interface_name_include: Vec<String>,
 }
 
 impl NetworkManagerConfig {
@@ -516,7 +522,11 @@ impl NetworkManagerConfig {
         "{devices}".to_string()
     }
 
-    fn default_interface_filters() -> Vec<String> {
+    fn default_interface_name_include_patterns() -> Vec<String> {
+        vec![]
+    }
+
+    fn default_interface_name_exclude_patterns() -> Vec<String> {
         vec![]
     }
 }
@@ -560,6 +570,10 @@ impl ConfigBlock for NetworkManager {
             })
             .unwrap();
 
+        fn compile_regexps(patterns: Vec<String>) -> result::Result<Vec<Regex>, regex::Error> {
+            patterns.iter().map(|p| Regex::new(&p)).collect()
+        }
+
         Ok(NetworkManager {
             id: id.clone(),
             config: config.clone(),
@@ -573,7 +587,10 @@ impl ConfigBlock for NetworkManager {
             ap_format: FormatTemplate::from_string(&block_config.ap_format)?,
             device_format: FormatTemplate::from_string(&block_config.device_format)?,
             connection_format: FormatTemplate::from_string(&block_config.connection_format)?,
-            interface_name_filters: block_config.interface_name_filters,
+            interface_name_include_regexps: compile_regexps(block_config.interface_name_exclude)
+                .block_error("networkmanager", "failed to parse exclude patterns")?,
+            interface_name_exclude_regexps: compile_regexps(block_config.interface_name_include)
+                .block_error("networkmanager", "failed to parse include patterns")?,
         })
     }
 }
@@ -655,10 +672,24 @@ impl Block for NetworkManager {
                                     Err(_) => "".to_string(),
                                 };
 
-                                for pattern in &self.interface_name_filters {
-                                    if Regex::new(&pattern).unwrap().is_match(&name) {
-                                        continue 'devices;
-                                    }
+                                // If an interface matches an exclude pattern, ignore it
+                                if self
+                                    .interface_name_exclude_regexps
+                                    .iter()
+                                    .any(|regex| regex.is_match(&name))
+                                {
+                                    continue 'devices;
+                                }
+
+                                // If we have at-least one include pattern, make sure
+                                // the interface name matches at least one of them
+                                if !self.interface_name_include_regexps.is_empty()
+                                    && !self
+                                        .interface_name_include_regexps
+                                        .iter()
+                                        .any(|regex| regex.is_match(&name))
+                                {
+                                    continue 'devices;
                                 }
 
                                 let (icon, type_name) = if let Ok(dev_type) =
